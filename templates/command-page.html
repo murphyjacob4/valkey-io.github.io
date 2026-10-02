@@ -182,55 +182,113 @@ Instead of using <code>{{ command_title }}</code> use <div class="replaced-by">{
 {% endblock main_content %}
 
 {% block related_content %}
-{# Set up variables for sidebar, similar to commands.html #}
+{% set commands_section = get_section(path="commands/_index.md", metadata_only=true) %}
+{% set page_size = commands_section.extra.commands_page_size | default(value=10) %}
+{% set group_descriptions = load_data(path="../_data/groups.json", required=false) %}
 
 <div class="sb-search-container">
-    <input type="text" id="sidebar-search-box" placeholder="Search within documents" onkeyup="searchSidebarCommands()" />
+    <input type="search" id="sidebar-search-box" placeholder="Search all commands..." autocomplete="off" aria-label="Search all commands" />
 </div>
 
 <!-- No results message for sidebar search -->
-<div id="sidebar-no-results-message" class="no-results-message" style="display: none;">
+<div id="sidebar-no-results-message" class="no-results-message" hidden>
     <span>&lt;/&gt;</span>
     <h4>No commands found</h4>
     <p>Check your spelling or try different keywords</p>
 </div>
 
-<h2 id="command-list-title">Alphabetical Command List</h2>
-<ul id="command-list"></ul>
+<h2 id="command-list-title">Similar commands</h2>
+<ul id="command-list" class="sb-command-list"></ul>
+<div class="sb-command-list-footer">
+    <button type="button" id="sidebar-show-more" class="command-show-more" hidden>Show more</button>
+    {# Only the status line is a live region: it summarises each update without re-reading the list. #}
+    <p id="sidebar-command-status" class="command-list-status" aria-live="polite"></p>
+    <p><a href="/commands/">Browse the full command reference</a></p>
+</div>
+
+<script src="/assets/js/command-reference.js"></script>
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    var 
-        commandListEl = document.getElementById('command-list'),
-        f =  fetch("/command-list/");
+(() => {
+    const CR = window.ValkeyCommandReference;
+    const PAGE_SIZE = {{ page_size }};
+    {#- `replace` keeps a "</" in the data from closing this <script>. #}
+    const CURRENT_SLUG = {{ page.slug | json_encode | replace(from="</", to="<\/") | safe }};
+    const groups = {{ commands::groups_js(group_descriptions=group_descriptions) }};
+    const groupNames = Object.fromEntries(Object.entries(groups).map(([key, g]) => [key, g.name]));
 
-    f.then((r) => r.text()).then((v) => { commandListEl.innerHTML = v; })
-    f.catch((error) => { commandListEl.innerHTML = "Could not load command list."; });
-});
+    const listEl = document.getElementById("command-list");
+    const searchBox = document.getElementById("sidebar-search-box");
+    const title = document.getElementById("command-list-title");
+    const showMore = document.getElementById("sidebar-show-more");
+    const status = document.getElementById("sidebar-command-status");
+    const noResults = document.getElementById("sidebar-no-results-message");
 
+    let entries = [];
+    let current = null;
+    let similar = [];
+    const state = { query: "", shown: PAGE_SIZE };
+    const setStatus = CR.liveStatus(status);
 
-function searchSidebarCommands() {
-    var input = document.getElementById("sidebar-search-box").value.toLowerCase();
-    var commandList = document.getElementById("command-list");
-    var commandListTitle = document.getElementById("command-list-title");
-    var items = commandList.querySelectorAll(".command-list-item");
-    var noResultsMessage = document.getElementById("sidebar-no-results-message");
-    var totalVisible = 0;
+    // `typing` debounces the live status so screen readers aren't interrupted on every keystroke.
+    function render(typing) {
+        const query = CR.normalizeQuery(state.query);
+        const matches = query ? CR.search(entries, query) : similar;
+        const visible = matches.slice(0, state.shown);
+        CR.showEntries(listEl, entries, visible);
+        if (current) current.el.classList.add("is-current");
 
-    items.forEach(function (item) {
-        var text = item.querySelector("a").innerText.toLowerCase();
-        if (text.includes(input)) {
-            item.style.display = "";
-            totalVisible++;
+        title.textContent = query ? `${matches.length} ${matches.length === 1 ? "result" : "results"}` : "Similar commands";
+        title.hidden = query !== "" && matches.length === 0;
+        noResults.hidden = matches.length !== 0;
+
+        const remaining = matches.length - visible.length;
+        CR.updateShowMore(showMore, remaining, PAGE_SIZE);
+        let message;
+        if (!matches.length) {
+            message = query ? "No commands found." : "";
+        } else if (!query && remaining <= 0) {
+            message = `Can't find it? Search above to look through all ${entries.length} commands.`;
         } else {
-            item.style.display = "none";
+            message = `Showing ${visible.length} of ${matches.length}.`;
         }
+        setStatus(message, !typing);
+    }
+
+    function init(html) {
+        listEl.innerHTML = html;
+        entries = Array.from(listEl.querySelectorAll(".command-list-item"), (el) => CR.parseEntry(el, groupNames));
+        current = entries.find((e) => e.slug === CURRENT_SLUG) || null;
+        similar = current
+            ? CR.mostSimilar(entries, current)
+            // Unknown command: fall back to the most popular ones.
+            : entries.filter((e) => e.rank !== Infinity).sort((a, b) => a.rank - b.rank);
+        render();
+    }
+
+    searchBox.addEventListener("input", () => {
+        state.query = searchBox.value;
+        state.shown = PAGE_SIZE;
+        render(true);
+    });
+    CR.bindSearchKeys(searchBox, listEl);
+    // No "/" shortcut here: on long doc pages it would override the browser's quick find.
+    showMore.addEventListener("click", () => {
+        state.shown += PAGE_SIZE;
+        render();
     });
 
-    // Show/hide no results message and title based on search results
-    var hasResults = totalVisible > 0;
-    noResultsMessage.style.display = hasResults ? "none" : "block";
-    commandListTitle.style.display = hasResults ? "" : "none";
-    commandList.style.display = hasResults ? "" : "none";
-}
+    fetch("/command-list/")
+        .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.text();
+        })
+        .then(init)
+        .catch(() => {
+            title.hidden = true;
+            showMore.hidden = true;
+            status.textContent = "";
+            listEl.innerHTML = "<li>Could not load the command list.</li>";
+        });
+})();
 </script>
 {% endblock related_content %}

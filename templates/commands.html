@@ -8,24 +8,17 @@
 {% endif %}
 
 {% set_global group_descriptions = load_data(path= "../_data/groups.json", required= false) %}
+{% set popular_commands = section.extra.popular_commands | default(value=[]) %}
+{% set page_size = section.extra.commands_page_size | default(value=10) %}
 
+{# Each entry: [display name, permalink, summary, group, slug, deprecated] #}
 {% set commands_entries = [] %}
-<!-- command search box -->
-<div class="search-container">
-    <label>Search Commands:</label>
-    <input type="text" id="search-box" placeholder="Search commands..." onkeyup="searchCommands()" />
-</div>
-
-<!-- No results message -->
-<div id="no-results-message" class="no-results-message"  style="display: none;">
-    <span>&lt;/&gt;</span>
-    <h4>We couldn't find any results matching your search</h4>
-    <p>Check your spelling or try different keywords</p>
-</div>
-
+{# Groups that contain module commands (valkey-bloom, valkey-json, valkey-search); their tabs go last. #}
+{% set_global module_groups = [] %}
 {% for page in section.pages %}
+    {% set core_json_path = commands::command_json_path(slug=page.slug) %}
     {% for json_path in [
-        commands::command_json_path(slug=page.slug),
+        core_json_path,
         commands::command_bloom_json_path(slug=page.slug),
         commands::command_json_json_path(slug=page.slug),
         commands::command_search_json_path(slug=page.slug)
@@ -38,11 +31,20 @@
             {% if command_data_obj.container %}
                 {% set command_display = command_data_obj.container ~ " " ~ command_display %}
             {% endif %}
+            {% set deprecated = false %}
+            {% if command_data_obj.doc_flags %}{% if "DEPRECATED" in command_data_obj.doc_flags %}{% set deprecated = true %}{% endif %}{% endif %}
+            {% set group = command_data_obj.group | replace(from="_", to="-") %}
+            {# Anything not loaded from the core valkey command JSON comes from a module. #}
+            {% if json_path != core_json_path and group not in module_groups %}
+                {% set_global module_groups = module_groups | concat(with=group) %}
+            {% endif %}
             {% set command_entry = [
                 command_display,
                 page.permalink | safe,
                 command_data_obj.summary,
-                command_data_obj.group
+                group,
+                page.slug,
+                deprecated
             ] %}
             {% set_global commands_entries = commands_entries | concat(with= [ command_entry ]) %}
         {% endif %}
@@ -50,76 +52,247 @@
 {% endfor %}
 {% set_global grouped = commands_entries | sort(attribute="3") | group_by(attribute="3") %}
 
+{# Popular slugs that exist in this build, without duplicates (see macros/command.html). Ranks are positions here, so a
+   duplicate or unknown slug in popular_commands doesn't leave the first page short. Unknown slugs are reported in the
+   browser console below; they are expected when building without the module docs. #}
+{% set known_slugs = commands_entries | map(attribute="4") %}
+{% set unique_popular = commands::popular_slugs(popular_commands=popular_commands, known_slugs=known_slugs) | trim | split(pat=",") %}
+{% set_global unknown_popular = [] %}
+{% for slug in popular_commands %}{% if slug not in known_slugs %}{% set_global unknown_popular = unknown_popular | concat(with=slug) %}{% endif %}{% endfor %}
 
-{% for command_group_name, command_group in grouped %}
-    <div class="command-group">
-        {% set command_group_description_name = command_group_name | replace(from="_", to="-") %}
-        <h2 id="{{command_group_description_name}}">{{ group_descriptions[command_group_description_name].display }}
-            <span>{{ group_descriptions[command_group_description_name].description }}</span>
-        </h2>
-        {% for entry in command_group | sort(attribute="0") %}
-            <div class="command-entry"><code><a href="{{ entry[1] }}">{{ entry[0] }}</a></code> {{entry[2]}}</div>
-        {% endfor %}
-        <div class="command-group-meta">
-            <small><a href="#top">Back to top</a></small>
-        </div>
-    </div>
+{# Tabs: core groups alphabetically, then module groups. Each tab: [sort key, group key, display, description]. #}
+{% set_global tabs = [] %}
+{% if group_descriptions %}
+{% for command_group_name, group_description in group_descriptions %}
+    {% if grouped[command_group_name] %}
+        {% if command_group_name in module_groups %}{% set tab_order = "1" %}{% else %}{% set tab_order = "0" %}{% endif %}
+        {% set tab_display_lower = group_description.display | lower %}
+        {% set tab_sort_key = tab_order ~ tab_display_lower %}
+        {% set tab_description = group_description.description | default(value="") %}
+        {% set tab = [tab_sort_key, command_group_name, group_description.display, tab_description] %}
+        {% set_global tabs = tabs | concat(with=[tab]) %}
+    {% endif %}
 {% endfor %}
+{% endif %}
 
+<!-- command search box + category tabs -->
+<div class="search-container command-search">
+    <label for="search-box">Search Commands:</label>
+    <input type="search" id="search-box" placeholder="Search all {{ commands_entries | length }} commands by name or description..." autocomplete="off" />
+    <nav class="command-tabs" aria-label="Command categories">
+        <a class="command-tab" href="#" data-group="" aria-current="true">All <span class="command-tab-count">{{ commands_entries | length }}</span></a>
+        {%- for tab in tabs | sort(attribute="0") %}
+        <a class="command-tab" href="#{{ tab[1] }}" data-group="{{ tab[1] }}"{% if tab[3] %} title="{{ tab[3] }}"{% endif %}>
+            {{- tab[2] }} <span class="command-tab-count">{{ grouped[tab[1]] | length }}</span>
+        </a>
+        {%- endfor %}
+    </nav>
+</div>
+
+<div class="command-list-header">
+    <h2 id="command-list-title">All commands</h2>
+    <p id="command-group-description" class="command-group-description" hidden></p>
+</div>
+
+<ul id="command-list" class="command-list">
+{# Popular commands first, in curated relevance order. #}
+{% for slug in unique_popular %}
+    {% set rank = loop.index %}
+    {% for entry in commands_entries | filter(attribute="4", value=slug) %}
+        {{ commands::command_list_entry(entry=entry, rank=rank, page_size=page_size, group_descriptions=group_descriptions) }}
+    {% endfor %}
+{% endfor %}
+{# Then everything else, alphabetically (the script moves deprecated commands to the end). #}
+{% for entry in commands_entries | sort(attribute="0") %}
+    {% if entry[4] not in unique_popular %}
+        {{ commands::command_list_entry(entry=entry, rank=0, page_size=page_size, group_descriptions=group_descriptions) }}
+    {% endif %}
+{% endfor %}
+</ul>
+
+<!-- No results message -->
+<div id="no-results-message" class="no-results-message" hidden>
+    <span>&lt;/&gt;</span>
+    <h4>We couldn't find any results matching your search</h4>
+    <p>Check your spelling or try different keywords</p>
+</div>
+
+<div class="command-list-footer">
+    <button type="button" id="show-more" class="command-show-more" hidden>Show more</button>
+    {# Only the status line is a live region: it summarises each update without re-reading the list. #}
+    <p id="command-list-status" class="command-list-status" aria-live="polite"></p>
+</div>
+
+<noscript>
+    {# Without JS, show every command. The id selector outranks `.command-list .command-entry[hidden]` in _valkey.scss. #}
+    <style>#command-list .command-entry[hidden] { display: grid; }</style>
+</noscript>
+
+<script src="/assets/js/command-reference.js"></script>
 <script>
-function searchCommands() {
-    var input = document.getElementById("search-box").value.toLowerCase();
-    var groups = document.querySelectorAll(".command-group");
-    var noResultsMessage = document.getElementById("no-results-message");
-    var totalVisible = 0;
+(() => {
+    const CR = window.ValkeyCommandReference;
+    const PAGE_SIZE = {{ page_size }};
+    const groups = {{ commands::groups_js(group_descriptions=group_descriptions) }};
+    const isGroup = (key) => Object.prototype.hasOwnProperty.call(groups, key);
+    const groupNames = Object.fromEntries(Object.entries(groups).map(([key, g]) => [key, g.name]));
+    {%- if unknown_popular | length > 0 %}
+    // Slugs in popular_commands (content/commands/_index.md) with no command JSON in this build: a typo, or module docs
+    // that weren't included. They are skipped.
+    console.warn("popular_commands: no such command:", {{ unknown_popular | json_encode | replace(from="</", to="<\/") | safe }});
+    {%- endif %}
 
-    groups.forEach(function (group) {
-        var items = group.querySelectorAll(".command-entry");
-        var found = false;
-        items.forEach(function (item) {
-            var text = item.querySelector("a").innerText.toLowerCase();
-            if (text.includes(input)) {
-                item.style.display = "";
-                found = true;
-                totalVisible++;
-            } else {
-                item.style.display = "none";
-            }
+    const searchBox = document.getElementById("search-box");
+    const searchArea = document.querySelector(".command-search");
+    const list = document.getElementById("command-list");
+    const title = document.getElementById("command-list-title");
+    const groupDescription = document.getElementById("command-group-description");
+    const showMore = document.getElementById("show-more");
+    const status = document.getElementById("command-list-status");
+    const noResults = document.getElementById("no-results-message");
+    const tabs = Array.from(document.querySelectorAll(".command-tab"));
+
+    const entries = Array.from(list.querySelectorAll(".command-entry"), (el) => CR.parseEntry(el, groupNames));
+    const state = { query: "", group: "", shown: PAGE_SIZE };
+    const setStatus = CR.liveStatus(status);
+    const cleanQuery = () => state.query.replace(/\s+/g, " ").trim();
+
+    function renderTabs(allMatches) {
+        const counts = {};
+        allMatches.forEach((e) => { counts[e.group] = (counts[e.group] || 0) + 1; });
+        const searching = cleanQuery() !== "";
+        tabs.forEach((tab) => {
+            const group = tab.dataset.group;
+            const active = group === state.group;
+            if (active) tab.setAttribute("aria-current", "true"); else tab.removeAttribute("aria-current");
+            const count = group ? (counts[group] || 0) : allMatches.length;
+            tab.querySelector(".command-tab-count").textContent = count;
+            tab.classList.toggle("command-tab-empty", searching && count === 0 && !active);
         });
-        group.style.display = found ? "" : "none";
+    }
+
+    function renderTitle(count, query, group) {
+        if (!query) {
+            title.textContent = group ? `${group.name} commands` : "All commands";
+            return;
+        }
+        // The heading is styled uppercase; the query keeps the case the user typed.
+        const q = document.createElement("span");
+        q.className = "command-query";
+        q.textContent = `\u201c${query}\u201d`;
+        title.textContent = `${count} ${count === 1 ? "result" : "results"} for `;
+        title.appendChild(q);
+        if (group) title.appendChild(document.createTextNode(` in ${group.name}`));
+    }
+
+    // `typing` debounces the live status so screen readers aren't interrupted on every keystroke.
+    function render(typing) {
+        // With no query this is every command: popular first, then alphabetical, deprecated last.
+        const allMatches = CR.search(entries, state.query);
+        const matches = state.group ? allMatches.filter((e) => e.group === state.group) : allMatches;
+        renderTabs(allMatches);
+        const visible = matches.slice(0, state.shown);
+        CR.showEntries(list, entries, visible);
+
+        const group = groups[state.group];
+        const query = cleanQuery();
+        renderTitle(matches.length, query, group);
+        groupDescription.textContent = group ? group.description : "";
+        groupDescription.hidden = !(group && group.description);
+
+        noResults.hidden = matches.length !== 0;
+        const remaining = matches.length - visible.length;
+        CR.updateShowMore(showMore, remaining, PAGE_SIZE);
+        let message;
+        if (matches.length === 0) {
+            message = "No commands found.";
+        } else if (remaining > 0 && !query) {
+            message = `Showing ${visible.length} of ${matches.length}. Use the search box to jump straight to a command.`;
+        } else {
+            message = `Showing ${visible.length} of ${matches.length}.`;
+        }
+        setStatus(message, !typing);
+    }
+
+    // Debounced while typing: Safari throws if replaceState is called ~100 times in a short window.
+    const syncUrl = CR.debounce(() => {
+        const url = new URL(window.location.href);
+        const query = cleanQuery();
+        if (query) url.searchParams.set("q", query); else url.searchParams.delete("q");
+        url.hash = state.group;
+        CR.replaceUrl(url.pathname + url.search + url.hash);
     });
 
-    // Show/hide no results message based on search results
-    noResultsMessage.style.display = totalVisible === 0 ? "block" : "none";
-}
-</script>
+    function readUrl() {
+        const url = new URL(window.location.href);
+        state.query = url.searchParams.get("q") || "";
+        let hash = url.hash.replace(/^#/, "");
+        try {
+            hash = decodeURIComponent(hash);
+        } catch (e) {
+            hash = ""; // Malformed escape such as "#%E0": fall back to All.
+        }
+        state.group = isGroup(hash) ? hash : "";
+        state.shown = PAGE_SIZE;
+        searchBox.value = state.query;
+    }
 
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    document.getElementById("search-box").focus();
-});
+    function selectGroup(group) {
+        if (group && !isGroup(group)) return; // Unknown group: ignore, like readUrl() does.
+        state.group = group;
+        state.shown = PAGE_SIZE;
+        render();
+        syncUrl.now();
+    }
+
+    searchBox.addEventListener("input", () => {
+        state.query = searchBox.value;
+        state.shown = PAGE_SIZE;
+        render(true);
+        syncUrl();
+    });
+    CR.bindSearchKeys(searchBox, list);
+    CR.bindSlashShortcut(searchBox);
+
+    showMore.addEventListener("click", () => {
+        state.shown += PAGE_SIZE;
+        render();
+    });
+
+    // Tabs and the category tag on each entry share one handler. Tabs and search use replaceState, so they don't add
+    // history entries; re-selecting the active group still works.
+    tabs.forEach((tab) => {
+        tab.addEventListener("click", (event) => {
+            event.preventDefault();
+            selectGroup(tab.dataset.group);
+        });
+    });
+    list.addEventListener("click", (event) => {
+        const tag = event.target.closest(".command-tag[data-group]");
+        if (!tag) return;
+        event.preventDefault();
+        selectGroup(tag.dataset.group);
+        CR.scrollToElement(searchArea);
+    });
+
+    // External links (e.g. /commands/#sorted-set) and hashes entered by hand.
+    window.addEventListener("hashchange", () => {
+        readUrl();
+        render();
+        CR.scrollToElement(searchArea);
+    });
+
+    readUrl();
+    render();
+    // Focus search on devices with a fine pointer only, so mobile keyboards don't pop up on load.
+    if (!window.matchMedia || window.matchMedia("(pointer: fine)").matches) searchBox.focus();
+})();
 </script>
 {% endblock main_content %}
 
-{% block related_content %}
-<h2 id="top">Command Categories</h2>
-<ul>
-{% if group_descriptions %}
-{% for command_group_name, group_description in group_descriptions %}
-    {% set replaced_group_id = command_group_name | replace(from="-", to="_") %}
-    {% if grouped[replaced_group_id]  %}<li>  <a href="#{{ command_group_name }}">{{ group_description.display }}</a></li>{% endif %}
-{% endfor %}
-{% endif %}
-</ul>
-
-<h2>Alphabetical Command List</h2>
-<ul>
-{% set alpha_entries = commands_entries | sort(attribute="0")  %}
-{% for entry in alpha_entries  %}
-    <li><code><a href="{{ entry[1] }}">{{ entry[0] }}</a></code></li>
-{% endfor %}
-</ul>
-{% endblock related_content %}
+{# Categories live in the tab row above the list, so this page has no sidebar. #}
+{% block aside %}{% endblock aside %}
+{% block layout_class %}no-aside{% endblock layout_class %}
 
 
 {% block subhead_content %}

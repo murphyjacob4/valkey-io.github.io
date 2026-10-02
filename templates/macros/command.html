@@ -75,3 +75,50 @@
     | safe
     }}
 {%- endmacro fix_links -%}
+
+{#- A single entry in the /commands/ list. entry: [display name, permalink, summary, group, slug, deprecated]. rank: 1-based position in the featured list, or 0. -#}
+{%- macro command_list_entry(entry, rank, page_size, group_descriptions) -%}
+{%- set group_display = entry[3] -%}
+{%- if group_descriptions and group_descriptions[entry[3]] -%}{%- set group_display = group_descriptions[entry[3]].display -%}{%- endif -%}
+{#- Name and summary are read from the link and .command-summary text (see command-reference.js). -#}
+<li class="command-entry"
+    data-slug="{{ entry[4] }}"
+    data-group="{{ entry[3] }}"
+    {% if rank %}data-rank="{{ rank }}"{% endif %}
+    {% if entry[5] %}data-deprecated="true"{% endif %}
+    {% if rank == 0 or rank > page_size %}hidden{% endif %}>
+    <code><a href="{{ entry[1] }}">{{ entry[0] }}</a></code>
+    <span class="command-summary">{{ entry[2] }}</span>
+    <span class="command-tags">
+        {%- if entry[5] %}<span class="command-tag command-tag-deprecated">Deprecated</span>{% endif -%}
+        {%- if group_descriptions and group_descriptions[entry[3]] %}
+        <a class="command-tag" href="#{{ entry[3] }}" data-group="{{ entry[3] }}">{{ group_display }}</a>
+        {%- else %}
+        <span class="command-tag">{{ group_display }}</span>
+        {%- endif %}
+    </span>
+</li>
+{%- endmacro command_list_entry -%}
+
+{#- Comma-separated popular slugs with duplicates and unknown slugs (no command JSON in this build, e.g. a typo or
+    missing module docs) removed, so ranks are positions in this list. Used by commands.html and command-list.html;
+    split the result with `| split(pat=",")`. -#}
+{%- macro popular_slugs(popular_commands, known_slugs) -%}
+    {%- set_global seen = [] -%}
+    {%- for slug in popular_commands -%}
+        {%- if slug in known_slugs and slug not in seen -%}{%- set_global seen = seen | concat(with=slug) -%}{%- endif -%}
+    {%- endfor -%}
+{{ seen | join(sep=",") }}
+{%- endmacro popular_slugs -%}
+
+{#- groups.json as a JS object literal: { "<group>": { name: "<display>", description: "<description>" }, ... }.
+    `replace` keeps a "</" in the data from closing the surrounding <script>. -#}
+{%- macro groups_js(group_descriptions) -%}
+{
+{%- if group_descriptions %}
+{%- for name, desc in group_descriptions %}
+    {{ name | json_encode | replace(from="</", to="<\/") | safe }}: { name: {{ desc.display | json_encode | replace(from="</", to="<\/") | safe }}, description: {{ desc.description | default(value="") | json_encode | replace(from="</", to="<\/") | safe }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+{%- endif %}
+}
+{%- endmacro groups_js -%}

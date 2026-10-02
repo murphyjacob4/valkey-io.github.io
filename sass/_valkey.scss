@@ -497,11 +497,11 @@ p {
 }
 
 .left-aside-bg {
-  background: linear-gradient(to left, #e2e8f0 49%, #f1f0fa 50%);
+  background: linear-gradient(to left, $left-aside-main-bg 49%, $left-aside-side-bg 50%);
 }
 
 .left-aside {
-  background-color: #e2e8f0;
+  background-color: $left-aside-main-bg;
   display: flex;
   max-width: var(--max-width);
   margin-left: auto;
@@ -1437,28 +1437,249 @@ pre table {
     display: inline;
   }
 }
-.command-group {
-  margin-bottom: 2rem;
-  
-  h2 {
-    border-bottom: 1px solid $line;
-    padding-bottom: 1rem;
-    margin: 0;
+.command-list-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  border-bottom: 1px solid $line;
+  padding-bottom: 1rem;
 
-    span {
-      font-weight: 400;
-    }
+  h2 {
+    margin: 0;
   }
 
+  // The search query inside the (uppercase) heading keeps the case the user typed.
+  .command-query {
+    text-transform: none;
+  }
+
+  .command-group-description {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 1.4rem;
+    color: $grey-dk-100;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+}
+
+.command-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+
   .command-entry {
+    display: grid;
+    grid-template-columns: minmax(12rem, max-content) 1fr auto;
+    align-items: baseline;
+    gap: 0.5rem 1.5rem;
     font-size: 1.5rem;
     border-bottom: 1px solid $line;
     padding: 1.25rem 0;
 
-    a {
+    &[hidden] {
+      display: none;
+    }
+
+    > code a {
       text-decoration: underline;
     }
-    
+
+    @media (max-width: 700px) {
+      grid-template-columns: 1fr auto;
+
+      .command-summary {
+        grid-column: 1 / -1;
+        grid-row: 2;
+      }
+    }
+  }
+
+  .command-tags {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  .command-tag {
+    white-space: nowrap;
+    font-size: 1.1rem;
+    padding: 0.1rem 0.75rem;
+    border-radius: 50px;
+    background: $blue-lt-000;
+    color: $blue-dk-200;
+    text-decoration: none;
+
+    &:hover {
+      background: $blue-lt-100;
+    }
+  }
+
+  .command-tag-deprecated {
+    background: lighten($red-000, 28%);
+    color: $red-300;
+  }
+}
+
+.command-list-footer {
+  text-align: center;
+  margin: 2rem 0;
+
+  .command-list-status {
+    color: $grey-dk-100;
+    font-size: 1.3rem;
+    margin: 1rem 0 0;
+  }
+}
+
+.command-show-more {
+  font-size: 1.4rem;
+  font-weight: 600;
+  padding: 0.75rem 2.5rem;
+  border: 1px solid $blue-dk-300;
+  border-radius: 50px;
+  background: none;
+  color: $blue-dk-300;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover,
+  &:focus-visible {
+    background: $blue-dk-300;
+    color: $white;
+  }
+}
+
+// Command page sidebar: similar commands + search.
+.left-aside aside ul.sb-command-list {
+  margin-bottom: 1rem;
+
+  .command-list-item {
+    background-color: $sidebar-item-bg;
+    margin-bottom: 0.75rem;
+    padding: 1rem 1.2rem;
+
+    &[hidden] {
+      display: none;
+    }
+
+    &:hover {
+      background-color: $sidebar-item-hover-bg;
+    }
+
+    &.is-current {
+      outline: 2px solid $blue-dk-300;
+    }
+
+    a {
+      display: inline;
+      background: none;
+      padding: 0;
+      margin: 0;
+
+      &:hover {
+        background: none;
+      }
+    }
+
+    code {
+      background: none;
+      padding: 0;
+    }
+
+    .command-list-summary {
+      display: block;
+      margin-top: 0.25rem;
+      font-size: 1.25rem;
+      color: $grey-dk-200;
+    }
+  }
+}
+
+.sb-command-list-footer {
+  text-align: center;
+
+  .command-list-status {
+    color: $grey-dk-100;
+    font-size: 1.3rem;
+    margin: 1rem 0 0;
+  }
+}
+
+.left-aside-bg.no-aside {
+  background: $left-aside-main-bg;
+}
+
+.search-container.command-search {
+  flex-wrap: wrap;
+  row-gap: 1.25rem;
+
+  label {
+    flex: 0 0 auto;
+  }
+}
+
+.command-tabs {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+
+  .command-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 1.1rem;
+    border: 1px solid $blue-lt-300;
+    border-radius: 50px;
+    background: $white;
+    color: $blue-dk-300;
+    font-size: 1.3rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+    &:hover {
+      background: $blue-lt-000;
+      border-color: $blue-100;
+    }
+
+    &[aria-current="true"] {
+      background: $blue-dk-300;
+      border-color: $blue-dk-300;
+      color: $white;
+
+      .command-tab-count {
+        background: rgba(255, 255, 255, 0.2);
+        color: $white;
+      }
+    }
+
+    // No matches for the current search. Grey text instead of opacity keeps contrast
+    // above WCAG AA (#666 on white is about 5.7:1).
+    &.command-tab-empty {
+      border-color: $grey-lt-000;
+      color: $grey-dk-100;
+      font-weight: 400;
+
+      .command-tab-count {
+        background: none;
+        color: $grey-dk-100;
+      }
+    }
+  }
+
+  .command-tab-count {
+    font-size: 1.1rem;
+    font-weight: 400;
+    padding: 0 0.5rem;
+    border-radius: 50px;
+    background: $blue-lt-000;
+    color: $blue-dk-200;
   }
 }
 

@@ -1,35 +1,66 @@
-{% import "macros/command.html" as commands %}
+{#- Fragment fetched only by command pages (command-page.html) to power the "Similar commands" sidebar and its
+    search. Every item is rendered `hidden`; the sidebar script decides what to show. Data attributes are documented
+    in static/assets/js/command-reference.js. -#}
+{%- import "macros/command.html" as commands -%}
 
-{% set commands_entries = [] %}
-{% set commands_section = get_section(path="commands/_index.md") %}
-{% for page in commands_section.pages %}
+{%- set commands_entries = [] -%}
+{%- set commands_section = get_section(path="commands/_index.md") -%}
+{%- set popular_commands = commands_section.extra.popular_commands | default(value=[]) -%}
+{#- ACL categories too broad to say two commands are related. "keyspace" mostly mirrors the generic group. -#}
+{%- set generic_acl_categories = ["read", "write", "fast", "slow", "admin", "dangerous", "keyspace"] -%}
+{%- for page in commands_section.pages -%}
 
-    {% for json_path in [
+    {%- for json_path in [
         commands::command_json_path(slug=page.slug),
         commands::command_bloom_json_path(slug=page.slug),
         commands::command_json_json_path(slug=page.slug),
         commands::command_search_json_path(slug=page.slug)
-    ] %}
-        {% set command_data = load_data(path= json_path, required= false) %}
-        {% if command_data %}
-            {% set command_obj_name = commands::command_obj_name(command_data= command_data) %}
-            {% set list_command_data_obj = command_data[command_obj_name] %}
-            {% set command_display = command_obj_name %}
-            {% if list_command_data_obj.container %}
-                {% set command_display = list_command_data_obj.container ~ " " ~ command_display %}
-            {% endif %}
-            {% set command_entry = [
+    ] -%}
+        {%- set command_data = load_data(path= json_path, required= false) -%}
+        {%- if command_data -%}
+            {%- set command_obj_name = commands::command_obj_name(command_data= command_data) -%}
+            {%- set list_command_data_obj = command_data[command_obj_name] -%}
+            {%- set command_display = command_obj_name -%}
+            {%- set container = "" -%}
+            {%- if list_command_data_obj.container -%}
+                {%- set container = list_command_data_obj.container -%}
+                {%- set command_display = list_command_data_obj.container ~ " " ~ command_display -%}
+            {%- endif -%}
+            {%- set deprecated = false -%}
+            {%- if list_command_data_obj.doc_flags -%}{%- if "DEPRECATED" in list_command_data_obj.doc_flags -%}{%- set deprecated = true -%}{%- endif -%}{%- endif -%}
+            {%- set_global acl = [] -%}
+            {%- for category in list_command_data_obj.acl_categories | default(value=[]) -%}
+                {#- Compare lower-cased: module JSON may not use upper-case category names. -#}
+                {%- set lower_category = category | lower -%}
+                {%- if lower_category not in generic_acl_categories -%}{%- set_global acl = acl | concat(with=lower_category) -%}{%- endif -%}
+            {%- endfor -%}
+            {#- replaced_by is markdown such as "`REPLICAOF`"; take the first code span as the replacement's slug. -#}
+            {%- set replaced_by = "" -%}
+            {%- if list_command_data_obj.replaced_by and "`" in list_command_data_obj.replaced_by -%}
+                {%- set replaced_by = list_command_data_obj.replaced_by | regex_replace(pattern="^[^`]*`([^`]+)`(?s:.*)$", rep="$1") | lower | replace(from=" ", to="-") -%}
+            {%- endif -%}
+            {%- set command_entry = [
                 command_display,
                 page.permalink | safe,
                 list_command_data_obj.summary,
-                list_command_data_obj.group
-            ] %}
-            {% set_global commands_entries = commands_entries | concat(with= [ command_entry ]) %}
-        {% endif %} 
-    {% endfor %}
-{% endfor %}
+                list_command_data_obj.group | replace(from="_", to="-"),
+                page.slug,
+                deprecated,
+                container | lower,
+                acl | join(sep=" "),
+                replaced_by
+            ] -%}
+            {%- set_global commands_entries = commands_entries | concat(with= [ command_entry ]) -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endfor -%}
 
+{#- Ranks are positions in the same de-duplicated popular list that commands.html uses. -#}
+{%- set known_slugs = commands_entries | map(attribute="4") -%}
+{%- set unique_popular = commands::popular_slugs(popular_commands=popular_commands, known_slugs=known_slugs) | trim | split(pat=",") -%}
 {% set alpha_entries = commands_entries | sort(attribute="0")  %}
-{% for entry in alpha_entries  %}
-    <li class="command-list-item"><code><a href="{{ entry[1] }}">{{ entry[0] }}</a></code></li>
-{% endfor %}
+{%- for entry in alpha_entries %}
+{%- set_global rank = 0 -%}
+{%- for slug in unique_popular -%}{%- if slug == entry[4] -%}{%- set_global rank = loop.index -%}{%- endif -%}{%- endfor %}
+<li class="command-list-item" hidden data-slug="{{ entry[4] }}" data-group="{{ entry[3] }}"{% if entry[6] %} data-container="{{ entry[6] }}"{% endif %}{% if entry[7] %} data-acl="{{ entry[7] }}"{% endif %}{% if rank > 0 %} data-rank="{{ rank }}"{% endif %}{% if entry[5] %} data-deprecated="true"{% endif %}{% if entry[8] %} data-replaced-by="{{ entry[8] }}"{% endif %}><code><a href="{{ entry[1] }}">{{ entry[0] }}</a></code> <span class="command-list-summary">{{ entry[2] }}</span></li>
+{%- endfor %}
